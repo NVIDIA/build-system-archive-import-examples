@@ -1,0 +1,8 @@
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_archive(
+	name = "tarball",
+	build_file = "tarball.BUILD",
+	sha256 = "b664c4cec5bf0518c83c5568fb9bc36d202dff67fce4ee12657043f45b431347",
+	strip_prefix = "libnvjpeg-linux-x86_64-11.5.2.120-archive",
+	urls = ["https://developer.download.nvidia.com/compute/cuda/redist/libnvjpeg/linux-x86_64/libnvjpeg-linux-x86_64-11.5.2.120-archive.tar.xz"],
+)

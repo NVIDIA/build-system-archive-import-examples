@@ -1,0 +1,5 @@
+example (#VERSION#-#REVISION#) stable; urgency=low
+
+  * Example Debian package build
+
+ -- maintainer <maintainer@example.com>  #TIMESTAMP#

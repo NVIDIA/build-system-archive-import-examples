@@ -1,0 +1,10 @@
+Source: example
+Maintainer: maintainer <maintainer@example.com>
+Section: multiverse/devel
+Priority: optional
+Standards-Version: 3.8.0
+
+Package: example
+Architecture: all
+Depends: ${misc:Depends}
+Description: Example package for test of Debian package signing

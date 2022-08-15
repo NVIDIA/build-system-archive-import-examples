@@ -1,0 +1,62 @@
+#!/usr/bin/make -f
+DH_VERBOSE := 1
+
+VERSION         ?= 999
+BRANCH          ?= 999
+REVISION        ?= 1
+TIMESTAMP       := $(shell date -R)
+
+%:
+	dh $@
+
+fill_templates:
+	for template in debian/templates/*.in; do \
+		dest=`echo $$template | \
+		      sed -e "s|\.in\$$||" \
+		          -e "s|templates\/||" \
+		          -e "s|BRANCH|$(BRANCH)|"`; \
+		sed -e "s|#VERSION#|$(VERSION)|g" \
+		    -e "s|#BRANCH#|$(BRANCH)|g" \
+		    -e "s|#SONAME#|$(SONAME)|g" \
+		    -e "s|#REVISION#|$(REVISION)|g" \
+		    -e "s|#TIMESTAMP#|$(TIMESTAMP)|g" \
+		    -e "s|#DEBLIBINSTDIR#|$(DEBLIBINSTDIR)|g" \
+		    $$template > $$dest; \
+	done
+
+override_dh_clean:
+	dh_clean
+
+override_dh_auto_clean:
+	date
+
+override_dh_auto_build:
+	rm -f lib*.so
+
+override_signfile:
+	cal
+
+override_dh_auto_install:
+	dh_install --exclude=none --fail-missing
+
+override_dh_makeshlibs:
+	DEB_BUILD_GNU_TYPE=$(DEB_HOST_GNU_TYPE) dh_makeshlibs
+
+#
+# Turn off a few of the debhelper scripts
+#
+override_dh_usrlocal:
+
+override_dh_strip:
+
+override_dh_strip_nondeterminism:
+
+#
+# Disable dh_shlibdeps to allow packaging to run on systems which aren't
+# the same architecture we're packaging for.
+#
+override_dh_shlibdeps:
+
+ifneq ($(DISABLE_FIXPERMS),)
+override_dh_fixperms:
+endif

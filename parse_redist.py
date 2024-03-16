@@ -68,6 +68,17 @@ def check_hash(filename, checksum):
         print("	-> Expectation: " + checksum)
 
 
+def check_size(filename, size):
+    """Compare file size with expected"""
+    bytes = str(os.stat(filename).st_size)
+    if size == bytes:
+        print("	 Verified size: " + bytes)
+    else:
+        print("  => Mismatch bytes:")
+        print("	-> Calculation: " + bytes)
+        print("	-> Expectation: " + size)
+
+
 def flatten_tree(src, dest, tag=None):
     """Merge hierarchy from multiple directories"""
     if tag:
@@ -89,27 +100,46 @@ def parse_artifact(
         full_path = parent + manifest[component][platform]["relative_path"]
 
     filename = os.path.basename(full_path)
+    file_path = filename
+    pwd = os.getcwd() + "/" + component + "/" + platform + "/"
 
-    if retrieve and not os.path.exists(filename) and not os.path.exists(parent + filename):
+    if (
+        retrieve
+        and not os.path.exists(filename)
+        and not os.path.exists(parent + filename)
+        and not os.path.exists(pwd + filename)
+    ):
         # Download archive
         fetch_file(full_path, filename)
+        file_path = filename
         ARCHIVES[platform].append(filename)
     elif os.path.exists(filename):
         print("  -> Found: " + filename)
+        file_path = filename
         ARCHIVES[platform].append(filename)
     elif os.path.exists(parent + filename):
         print("  -> Found: " + parent + filename)
+        file_path = parent + filename
+        ARCHIVES[platform].append(parent + filename)
+    elif os.path.exists(pwd + filename):
+        print("  -> Found: " + pwd + filename)
+        file_path = pwd + filename
         ARCHIVES[platform].append(parent + filename)
     else:
+        print("Parent: " + pwd + filename)
         print("  -> Artifact: " + filename)
 
-    if validate and os.path.exists(filename):
+    if validate and os.path.exists(file_path):
         if variant:
             checksum = manifest[component][platform][variant]["sha256"]
+            size = manifest[component][platform][variant]["size"]
         else:
             checksum = manifest[component][platform]["sha256"]
+            size = manifest[component][platform]["size"]
+
         # Compare checksum
-        check_hash(filename, checksum)
+        check_hash(file_path, checksum)
+        check_size(file_path, size)
 
 
 def fetch_action(parent, manifest, component_filter, platform_filter, retrieve, validate):

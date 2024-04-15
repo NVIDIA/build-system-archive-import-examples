@@ -101,7 +101,7 @@ def parse_artifact(
 
     filename = os.path.basename(full_path)
     file_path = filename
-    pwd = os.getcwd() + "/" + component + "/" + platform + "/"
+    pwd = os.path.join(os.getcwd(), component, platform)
 
     if (
         retrieve
@@ -117,16 +117,16 @@ def parse_artifact(
         print("  -> Found: " + filename)
         file_path = filename
         ARCHIVES[platform].append(filename)
-    elif os.path.exists(parent + filename):
-        print("  -> Found: " + parent + filename)
-        file_path = parent + filename
-        ARCHIVES[platform].append(parent + filename)
-    elif os.path.exists(pwd + filename):
-        print("  -> Found: " + pwd + filename)
-        file_path = pwd + filename
+    elif os.path.exists(os.path.join(parent, filename)):
+        file_path = os.path.join(parent, filename)
+        print("  -> Found: " + file_path)
+        ARCHIVES[platform].append(file_path)
+    elif os.path.exists(os.path.join(pwd, filename)):
+        file_path = os.path.join(pwd, filename)
+        print("  -> Found: " + file_path)
         ARCHIVES[platform].append(parent + filename)
     else:
-        print("Parent: " + pwd + filename)
+        print("Parent: " + os.path.join(pwd, filename))
         print("  -> Artifact: " + filename)
 
     if validate and os.path.exists(file_path):

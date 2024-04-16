@@ -4,9 +4,10 @@
 """
 Sample parser for redistrib JSON manifests
 1. Downloads each archive
-2. Validates SHA256 checksums
-3. Extracts archives
-4. Flattens into a collapsed directory structure
+2. Validates file size in bytes
+3. Validates SHA256 checksums
+4. Extracts archives
+5. Flattens into a collapsed directory structure
 """
 
 import argparse
@@ -99,6 +100,7 @@ def parse_artifact(
     component,
     platform,
     retrieve=True,
+    integrity=True,
     validate=True,
     variant=None,
 ):
@@ -137,20 +139,28 @@ def parse_artifact(
         print("Parent: " + os.path.join(pwd, filename))
         print("  -> Artifact: " + filename)
 
+    if integrity and os.path.exists(file_path):
+        if variant:
+            size = manifest[component][platform][variant]["size"]
+        else:
+            size = manifest[component][platform]["size"]
+
+        # Compare size
+        check_size(file_path, size)
+
     if validate and os.path.exists(file_path):
         if variant:
             checksum = manifest[component][platform][variant]["sha256"]
-            size = manifest[component][platform][variant]["size"]
         else:
             checksum = manifest[component][platform]["sha256"]
-            size = manifest[component][platform]["size"]
 
         # Compare checksum
         check_hash(file_path, checksum)
-        check_size(file_path, size)
 
 
-def fetch_action(parent, manifest, component_filter, platform_filter, retrieve, validate):
+def fetch_action(
+    parent, manifest, component_filter, platform_filter, retrieve, integrity, validate
+):
     """Do actions while parsing JSON"""
     for component in manifest.keys():
         if not "name" in manifest[component]:
@@ -186,11 +196,14 @@ def fetch_action(parent, manifest, component_filter, platform_filter, retrieve, 
                             component,
                             platform,
                             retrieve,
+                            integrity,
                             validate,
                             variant,
                         )
                 else:
-                    parse_artifact(parent, manifest, component, platform, retrieve, validate)
+                    parse_artifact(
+                        parent, manifest, component, platform, retrieve, integrity, validate
+                    )
 
 
 def post_action(output_dir, collapse=True):
@@ -273,6 +286,21 @@ def main():
         dest="retrieve",
         action="store_false",
         help="Parse manifest without downloads",
+    )
+    parser.add_argument(
+        "-b",
+        "--bytes",
+        dest="integrity",
+        action="store_true",
+        help="Verify file size in bytes",
+        default=True,
+    )
+    parser.add_argument(
+        "-B",
+        "--no-bytes",
+        dest="integrity",
+        action="store_false",
+        help="Skip file size validation",
     )
     parser.add_argument(
         "-s",
@@ -360,6 +388,12 @@ def main():
         retrieve = args.retrieve
     else:
         retrieve = True
+
+    if args.integrity is not None:
+        integrity = args.integrity
+    else:
+        integrity = True
+
     if args.validate is not None:
         validate = args.validate
     else:
@@ -369,6 +403,7 @@ def main():
         unrolled = args.unrolled
     else:
         unrolled = True
+
     if args.collapse is not None:
         collapse = args.collapse
     else:
@@ -398,6 +433,7 @@ def main():
         component,
         platform,
         retrieve,
+        integrity,
         validate,
     )
     if unrolled:

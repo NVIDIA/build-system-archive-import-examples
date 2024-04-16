@@ -10,6 +10,20 @@ Sample parser for redistrib JSON manifests
 5. Flattens into a collapsed directory structure
 """
 
+__version__ = "0.5.0"
+minimum = "3.8"
+
+"""
+Sanity check
+"""
+import sys
+
+if sys.version_info < tuple(map(int, minimum.split("."))):
+    print(
+        "ERROR: script", __file__, "version", __version__, "requires Python %s or later" % minimum
+    )
+    sys.exit(1)
+
 import argparse
 import os
 import hashlib
@@ -19,10 +33,7 @@ import shutil
 import tarfile
 import zipfile
 import warnings
-import sys
 from urllib.request import urlopen
-
-__version__ = "0.4.0"
 
 """
 Suppress warning

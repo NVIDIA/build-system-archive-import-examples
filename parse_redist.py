@@ -32,18 +32,7 @@ import re
 import shutil
 import tarfile
 import zipfile
-import warnings
 from urllib.request import urlopen
-
-"""
-Suppress warning
-"""
-try:
-    from pip._vendor.requests.packages.urllib3.exceptions import DependencyWarning
-
-    warnings.filterwarnings("ignore", category=DependencyWarning)
-except:
-    pass
 
 
 ARCHIVES = {}

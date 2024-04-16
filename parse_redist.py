@@ -82,17 +82,25 @@ def check_size(filename, size):
 def flatten_tree(src, dest, tag=None):
     """Merge hierarchy from multiple directories"""
     if tag:
-        dest += "/" + tag
+        dest = os.path.join(dest, tag)
 
     try:
         shutil.copytree(src, dest, symlinks=1, dirs_exist_ok=1, ignore_dangling_symlinks=1)
     except FileExistsError:
         pass
+    except OSError:
+        pass
     shutil.rmtree(src)
 
 
 def parse_artifact(
-    parent, manifest, component, platform, retrieve=True, validate=True, variant=None
+    parent,
+    manifest,
+    component,
+    platform,
+    retrieve=True,
+    validate=True,
+    variant=None,
 ):
     if variant:
         full_path = parent + manifest[component][platform][variant]["relative_path"]
@@ -124,7 +132,7 @@ def parse_artifact(
     elif os.path.exists(os.path.join(pwd, filename)):
         file_path = os.path.join(pwd, filename)
         print("  -> Found: " + file_path)
-        ARCHIVES[platform].append(parent + filename)
+        ARCHIVES[platform].append(file_path)
     else:
         print("Parent: " + os.path.join(pwd, filename))
         print("  -> Artifact: " + filename)
@@ -161,12 +169,17 @@ def fetch_action(parent, manifest, component_filter, platform_filter, retrieve, 
                 ARCHIVES[platform] = []
 
             if not isinstance(manifest[component][platform], str):
-                if platform_filter is not None and platform != platform_filter:
+                if (
+                    platform_filter is not None
+                    and platform != platform_filter
+                    and platform != "source"
+                ):
                     print("  -> Skipping platform: " + platform)
                     continue
 
                 if not "relative_path" in manifest[component][platform]:
                     for variant in manifest[component][platform].keys():
+
                         parse_artifact(
                             parent,
                             manifest,
@@ -193,7 +206,7 @@ def post_action(output_dir, collapse=True):
         for archive in ARCHIVES[platform]:
             try:
                 binTag = archive.split("-")[3].split("_")[1]
-                print(platform, binTag)
+                # print(platform, binTag)
             except:
                 binTag = None
 
@@ -206,7 +219,9 @@ def post_action(output_dir, collapse=True):
                 tarball.close()
                 print("  -> Extracted: " + topdir + "/")
                 if collapse:
-                    flatten_tree(topdir, output_dir + "/" + platform, binTag)
+                    flatdir = os.path.join(output_dir, platform)
+                    flatten_tree(topdir, flatdir, binTag)
+                    print("  -> Flattened: " + flatdir + "/")
 
             # Zip files
             elif re.search(r"\.zip", archive):
@@ -218,13 +233,15 @@ def post_action(output_dir, collapse=True):
 
                 print("  -> Extracted: " + topdir)
                 if collapse:
-                    flatten_tree(topdir, output_dir + "/" + platform, binTag)
+                    flatdir = os.path.join(output_dir, platform)
+                    flatten_tree(topdir, flatdir, binTag)
+                    print("  -> Flattened: " + flatdir + "/")
 
     print("\nOutput: " + output_dir + "/")
     for item in sorted(os.listdir(output_dir)):
-        if os.path.isdir(output_dir + "/" + item):
+        if os.path.isdir(os.path.join(output_dir, item)):
             print(" - " + item + "/")
-        elif os.path.isfile(output_dir + "/" + item):
+        elif os.path.isfile(os.path.join(output_dir, item)):
             print(" - " + item)
 
 

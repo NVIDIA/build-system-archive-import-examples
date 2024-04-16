@@ -159,7 +159,7 @@ def parse_artifact(
 
 
 def fetch_action(
-    parent, manifest, component_filter, platform_filter, retrieve, integrity, validate
+    parent, manifest, component_filter, platform_filter, cuda_filter, retrieve, integrity, validate
 ):
     """Do actions while parsing JSON"""
     for component in manifest.keys():
@@ -189,6 +189,9 @@ def fetch_action(
 
                 if not "relative_path" in manifest[component][platform]:
                     for variant in manifest[component][platform].keys():
+                        if cuda_filter is not None and variant != cuda_filter:
+                            print("  -> Skipping variant: " + variant)
+                            continue
 
                         parse_artifact(
                             parent,
@@ -271,6 +274,7 @@ def main():
     parser.add_argument("--component", dest="component", help="Component name")
     parser.add_argument("--os", dest="os", help="Operating System")
     parser.add_argument("--arch", dest="arch", help="Architecture")
+    parser.add_argument("--variant", dest="cuda", help="Variant")
     # Toggle actions
     parser.add_argument(
         "-w",
@@ -370,6 +374,11 @@ def main():
         # if both are None we ignore the platform filter
         platform = None
 
+    if args.cuda is not None:
+        cuda = args.cuda
+    else:
+        cuda = None
+
     if args.output is not None:
         output_dir = args.output
     else:
@@ -432,6 +441,7 @@ def main():
         manifest,
         component,
         platform,
+        cuda,
         retrieve,
         integrity,
         validate,

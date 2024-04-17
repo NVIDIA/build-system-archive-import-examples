@@ -128,6 +128,7 @@ def parse_artifact(
     if (
         retrieve
         and not os.path.exists(filename)
+        and not os.path.exists(full_path)
         and not os.path.exists(parent + filename)
         and not os.path.exists(pwd + filename)
     ):
@@ -139,6 +140,10 @@ def parse_artifact(
         print("  -> Found: " + filename)
         file_path = filename
         ARCHIVES[platform].append(filename)
+    elif os.path.exists(full_path):
+        file_path = full_path
+        print("  -> Found: " + file_path)
+        ARCHIVES[platform].append(file_path)
     elif os.path.exists(os.path.join(parent, filename)):
         file_path = os.path.join(parent, filename)
         print("  -> Found: " + file_path)

@@ -26,6 +26,7 @@ if sys.version_info < tuple(map(int, minimum.split("."))):
 
 import argparse
 import os
+import stat
 import hashlib
 import json
 import re
@@ -92,6 +93,15 @@ def check_size(filename, size):
         print("	-> Expectation: " + size)
 
 
+def fix_permissions(directory):
+    """Fix for read-only files chmod u+w"""
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            filename = os.path.join(root, file)
+            octal = os.stat(filename)
+            os.chmod(filename, octal.st_mode | stat.S_IWRITE)
+
+
 def flatten_tree(src, dest, tag=None):
     """Merge hierarchy from multiple directories"""
     if tag:
@@ -100,8 +110,6 @@ def flatten_tree(src, dest, tag=None):
     try:
         shutil.copytree(src, dest, symlinks=1, dirs_exist_ok=1, ignore_dangling_symlinks=1)
     except FileExistsError:
-        pass
-    except OSError:
         pass
     shutil.rmtree(src)
 
@@ -250,7 +258,10 @@ def post_action(output_dir, collapse=True):
                 topdir = os.path.commonprefix(tarball.getnames())
                 tarball.extractall()
                 tarball.close()
+
                 print("  -> Extracted: " + topdir + "/")
+                fix_permissions(topdir)
+
                 if collapse:
                     flatdir = os.path.join(output_dir, platform)
                     flatten_tree(topdir, flatdir, binTag)
@@ -265,6 +276,8 @@ def post_action(output_dir, collapse=True):
                 zippy.close()
 
                 print("  -> Extracted: " + topdir)
+                fix_permissions(topdir)
+
                 if collapse:
                     flatdir = os.path.join(output_dir, platform)
                     flatten_tree(topdir, flatdir, binTag)

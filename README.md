@@ -25,6 +25,8 @@ usage: parse_redist.py (-u URL | [-l LABEL] [-p PRODUCT]) [-o OUTPUT]
        option filters: [--component COMPONENT] ([--os OS] [--arch ARCH])
        option toggles: [--no-download] [--no-checksum] [--no-extract] [--no-flatten]
 ```
+> note: for this reference script, Python 3.8 or later is required
+
 
 ### Example
 

@@ -4,39 +4,39 @@
 """
 Sample parser for redistrib JSON manifests
 1. Downloads each archive
-2. Validates SHA256 checksums
-3. Extracts archives
-4. Flattens into a collapsed directory structure
+2. Validates file size in bytes
+3. Validates SHA256 checksums
+4. Extracts archives
+5. Flattens into a collapsed directory structure
 """
+
+__version__ = "0.5.0"
+minimum = "3.8"
+
+"""
+Sanity check
+"""
+import sys
+
+if sys.version_info < tuple(map(int, minimum.split("."))):
+    print(
+        "ERROR: script", __file__, "version", __version__, "requires Python %s or later" % minimum
+    )
+    sys.exit(1)
+
 import argparse
-import os.path
+import os
 import hashlib
 import json
 import re
 import shutil
 import tarfile
 import zipfile
-import sys
-import requests
+from urllib.request import urlopen
 
-__version__ = "0.3.0"
 
 ARCHIVES = {}
 DOMAIN = "https://developer.download.nvidia.com"
-OUTPUT = "flat"
-PRODUCT = None
-LABEL = None
-URL = None
-OS = None
-ARCH = None
-PLATFORM = None
-COMPONENT = None
-
-# Default actions
-RETRIEVE = True
-VALIDATE = True
-UNROLLED = True
-COLLAPSE = True
 
 
 def err(msg):
@@ -47,13 +47,13 @@ def err(msg):
 
 def fetch_file(full_path, filename):
     """Download file to disk"""
-    download = requests.get(full_path)
-    if download.status_code != 200:
+    download = urlopen(full_path)
+    if download.status != 200:
         print("  -> Failed: " + filename)
     else:
         print(":: Fetching: " + full_path)
         with open(filename, "wb") as file:
-            file.write(download.content)
+            file.write(download.read())
             print("  -> Wrote: " + filename)
 
 
@@ -81,116 +81,178 @@ def check_hash(filename, checksum):
         print("	-> Expectation: " + checksum)
 
 
-def flatten_tree(src, dest, tag=None):
-    if tag:
-        dest += "/" + tag
+def check_size(filename, size):
+    """Compare file size with expected"""
+    bytes = str(os.stat(filename).st_size)
+    if size == bytes:
+        print("	 Verified size: " + bytes)
+    else:
+        print("  => Mismatch bytes:")
+        print("	-> Calculation: " + bytes)
+        print("	-> Expectation: " + size)
 
+
+def flatten_tree(src, dest, tag=None):
     """Merge hierarchy from multiple directories"""
+    if tag:
+        dest = os.path.join(dest, tag)
+
     try:
-        shutil.copytree(
-            src, dest, symlinks=1, dirs_exist_ok=1, ignore_dangling_symlinks=1
-        )
+        shutil.copytree(src, dest, symlinks=1, dirs_exist_ok=1, ignore_dangling_symlinks=1)
     except FileExistsError:
+        pass
+    except OSError:
         pass
     shutil.rmtree(src)
 
 
-def parse_artifact(parent, MANIFEST, component, platform, variant=None):
+def parse_artifact(
+    parent,
+    manifest,
+    component,
+    platform,
+    retrieve=True,
+    integrity=True,
+    validate=True,
+    variant=None,
+):
     if variant:
-        full_path = parent + MANIFEST[component][platform][variant]["relative_path"]
+        full_path = parent + manifest[component][platform][variant]["relative_path"]
     else:
-        full_path = parent + MANIFEST[component][platform]["relative_path"]
+        full_path = parent + manifest[component][platform]["relative_path"]
 
     filename = os.path.basename(full_path)
+    file_path = filename
+    pwd = os.path.join(os.getcwd(), component, platform)
 
     if (
-        RETRIEVE
+        retrieve
         and not os.path.exists(filename)
         and not os.path.exists(parent + filename)
+        and not os.path.exists(pwd + filename)
     ):
         # Download archive
         fetch_file(full_path, filename)
+        file_path = filename
         ARCHIVES[platform].append(filename)
     elif os.path.exists(filename):
         print("  -> Found: " + filename)
+        file_path = filename
         ARCHIVES[platform].append(filename)
-    elif os.path.exists(parent + filename):
-        print("  -> Found: " + parent + filename)
-        ARCHIVES[platform].append(parent + filename)
+    elif os.path.exists(os.path.join(parent, filename)):
+        file_path = os.path.join(parent, filename)
+        print("  -> Found: " + file_path)
+        ARCHIVES[platform].append(file_path)
+    elif os.path.exists(os.path.join(pwd, filename)):
+        file_path = os.path.join(pwd, filename)
+        print("  -> Found: " + file_path)
+        ARCHIVES[platform].append(file_path)
     else:
+        print("Parent: " + os.path.join(pwd, filename))
         print("  -> Artifact: " + filename)
 
-    if VALIDATE and os.path.exists(filename):
+    if integrity and os.path.exists(file_path):
         if variant:
-            checksum = MANIFEST[component][platform][variant]["sha256"]
+            size = manifest[component][platform][variant]["size"]
         else:
-            checksum = MANIFEST[component][platform]["sha256"]
+            size = manifest[component][platform]["size"]
+
+        # Compare size
+        check_size(file_path, size)
+
+    if validate and os.path.exists(file_path):
+        if variant:
+            checksum = manifest[component][platform][variant]["sha256"]
+        else:
+            checksum = manifest[component][platform]["sha256"]
+
         # Compare checksum
-        check_hash(filename, checksum)
+        check_hash(file_path, checksum)
 
 
-def fetch_action(parent):
+def fetch_action(
+    parent, manifest, component_filter, platform_filter, cuda_filter, retrieve, integrity, validate
+):
     """Do actions while parsing JSON"""
-    for component in MANIFEST.keys():
-        if not "name" in MANIFEST[component]:
+    for component in manifest.keys():
+        if not "name" in manifest[component]:
             continue
 
-        if COMPONENT is not None and component != COMPONENT:
+        if component_filter is not None and component != component_filter:
             continue
 
-        print(
-            "\n" + MANIFEST[component]["name"] + ": " + MANIFEST[component]["version"]
-        )
+        print("\n" + manifest[component]["name"] + ": " + manifest[component]["version"])
 
-        for platform in MANIFEST[component].keys():
+        for platform in manifest[component].keys():
             if "variant" in platform:
                 continue
 
             if not platform in ARCHIVES:
                 ARCHIVES[platform] = []
 
-            if not isinstance(MANIFEST[component][platform], str):
-                if PLATFORM is not None and platform != PLATFORM:
+            if not isinstance(manifest[component][platform], str):
+                if (
+                    platform_filter is not None
+                    and platform != platform_filter
+                    and platform != "source"
+                ):
                     print("  -> Skipping platform: " + platform)
                     continue
 
-                if not "relative_path" in MANIFEST[component][platform]:
-                    for variant in MANIFEST[component][platform].keys():
-                        parse_artifact(parent, MANIFEST, component, platform, variant)
+                if not "relative_path" in manifest[component][platform]:
+                    for variant in manifest[component][platform].keys():
+                        if cuda_filter is not None and variant != cuda_filter:
+                            print("  -> Skipping variant: " + variant)
+                            continue
+
+                        parse_artifact(
+                            parent,
+                            manifest,
+                            component,
+                            platform,
+                            retrieve,
+                            integrity,
+                            validate,
+                            variant,
+                        )
                 else:
-                    parse_artifact(parent, MANIFEST, component, platform)
+                    parse_artifact(
+                        parent, manifest, component, platform, retrieve, integrity, validate
+                    )
 
 
-def post_action():
+def post_action(output_dir, collapse=True):
     """Extract archives and merge directories"""
     if len(ARCHIVES) == 0:
         return
 
     print("\nArchives:")
-    if not os.path.exists(OUTPUT):
-        os.makedirs(OUTPUT)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     for platform in ARCHIVES:
         for archive in ARCHIVES[platform]:
             try:
                 binTag = archive.split("-")[3].split("_")[1]
-                print(platform, binTag)
+                # print(platform, binTag)
             except:
                 binTag = None
 
             # Tar files
-            if UNROLLED and re.search(r"\.tar\.", archive):
+            if re.search(r"\.tar\.", archive):
                 print(":: tar: " + archive)
                 tarball = tarfile.open(archive)
                 topdir = os.path.commonprefix(tarball.getnames())
                 tarball.extractall()
                 tarball.close()
                 print("  -> Extracted: " + topdir + "/")
-                if COLLAPSE:
-                    flatten_tree(topdir, OUTPUT + "/" + platform, binTag)
+                if collapse:
+                    flatdir = os.path.join(output_dir, platform)
+                    flatten_tree(topdir, flatdir, binTag)
+                    print("  -> Flattened: " + flatdir + "/")
 
             # Zip files
-            elif UNROLLED and re.search(r"\.zip", archive):
+            elif re.search(r"\.zip", archive):
                 print(":: zip: " + archive)
                 with zipfile.ZipFile(archive) as zippy:
                     topdir = os.path.commonprefix(zippy.namelist())
@@ -198,35 +260,35 @@ def post_action():
                 zippy.close()
 
                 print("  -> Extracted: " + topdir)
-                if COLLAPSE:
-                    flatten_tree(topdir, OUTPUT + "/" + platform, binTag)
+                if collapse:
+                    flatdir = os.path.join(output_dir, platform)
+                    flatten_tree(topdir, flatdir, binTag)
+                    print("  -> Flattened: " + flatdir + "/")
 
-    print("\nOutput: " + OUTPUT + "/")
-    for item in sorted(os.listdir(OUTPUT)):
-        if os.path.isdir(OUTPUT + "/" + item):
+    print("\nOutput: " + output_dir + "/")
+    for item in sorted(os.listdir(output_dir)):
+        if os.path.isdir(os.path.join(output_dir, item)):
             print(" - " + item + "/")
-        elif os.path.isfile(OUTPUT + "/" + item):
+        elif os.path.isfile(os.path.join(output_dir, item)):
             print(" - " + item)
 
 
-# If running standalone
-if __name__ == "__main__":
+def main():
     # Parse CLI arguments
-    PARSER = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()
     # Input options
-    PARSER_GROUP = PARSER.add_mutually_exclusive_group(required=True)
-    PARSER_GROUP.add_argument("-u", "--url", dest="url", help="URL to manifest")
-    PARSER_GROUP.add_argument(
-        "-l", "--label", dest="label", help="Release label version"
-    )
-    PARSER.add_argument("-p", "--product", dest="product", help="Product name")
-    PARSER.add_argument("-o", "--output", dest="output", help="Output directory")
+    parser_group = parser.add_mutually_exclusive_group(required=True)
+    parser_group.add_argument("-u", "--url", dest="url", help="URL to manifest")
+    parser_group.add_argument("-l", "--label", dest="label", help="Release label version")
+    parser.add_argument("-p", "--product", dest="product", help="Product name")
+    parser.add_argument("-o", "--output", dest="output", help="Output directory")
     # Filter options
-    PARSER.add_argument("--component", dest="component", help="Component name")
-    PARSER.add_argument("--os", dest="os", help="Operating System")
-    PARSER.add_argument("--arch", dest="arch", help="Architecture")
+    parser.add_argument("--component", dest="component", help="Component name")
+    parser.add_argument("--os", dest="os", help="Operating System")
+    parser.add_argument("--arch", dest="arch", help="Architecture")
+    parser.add_argument("--variant", dest="cuda", help="Variant")
     # Toggle actions
-    PARSER.add_argument(
+    parser.add_argument(
         "-w",
         "--download",
         dest="retrieve",
@@ -234,14 +296,29 @@ if __name__ == "__main__":
         help="Download archives",
         default=True,
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-W",
         "--no-download",
         dest="retrieve",
         action="store_false",
         help="Parse manifest without downloads",
     )
-    PARSER.add_argument(
+    parser.add_argument(
+        "-b",
+        "--bytes",
+        dest="integrity",
+        action="store_true",
+        help="Verify file size in bytes",
+        default=True,
+    )
+    parser.add_argument(
+        "-B",
+        "--no-bytes",
+        dest="integrity",
+        action="store_false",
+        help="Skip file size validation",
+    )
+    parser.add_argument(
         "-s",
         "--checksum",
         dest="validate",
@@ -249,14 +326,14 @@ if __name__ == "__main__":
         help="Verify SHA256 checksum",
         default=True,
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-S",
         "--no-checksum",
         dest="validate",
         action="store_false",
         help="Skip SHA256 checksum validation",
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-x",
         "--extract",
         dest="unrolled",
@@ -264,14 +341,14 @@ if __name__ == "__main__":
         help="Extract archives",
         default=True,
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-X",
         "--no-extract",
         dest="unrolled",
         action="store_false",
         help="Do not extract archives",
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-f",
         "--flatten",
         dest="collapse",
@@ -279,7 +356,7 @@ if __name__ == "__main__":
         help="Collapse directories",
         default=True,
     )
-    PARSER.add_argument(
+    parser.add_argument(
         "-F",
         "--no-flatten",
         dest="collapse",
@@ -287,72 +364,105 @@ if __name__ == "__main__":
         help="Do not collapse directories",
     )
 
-    ARGS = PARSER.parse_args()
-    # print(ARGS)
-    RETRIEVE = ARGS.retrieve
-    VALIDATE = ARGS.validate
-    UNROLLED = ARGS.unrolled
-    COLLAPSE = ARGS.collapse
+    args = parser.parse_args()
 
-    # Define variables
-    if ARGS.label is not None:
-        LABEL = ARGS.label
-    if ARGS.product is not None:
-        PRODUCT = ARGS.product
-    if ARGS.url is not None:
-        URL = ARGS.url
-    if ARGS.output is not None:
-        OUTPUT = ARGS.output
-    if ARGS.component is not None:
-        COMPONENT = ARGS.component
-    if ARGS.os is not None:
-        OS = ARGS.os
-    if ARGS.arch is not None:
-        ARCH = ARGS.arch
+    #
+    # Setup
+    #
 
+    component = args.component
 
-#
-# Setup
-#
-
-# Sanity check
-if not UNROLLED:
-    COLLAPSE = False
-
-# Short-hand
-if LABEL:
-    if PRODUCT:
-        URL = f"{DOMAIN}/compute/{PRODUCT}/redist/redistrib_{LABEL}.json"
+    # Deduce the platform from both --os and --arch if passed
+    # note: os_ to not shadow the os module
+    os_ = args.os
+    arch = args.arch
+    if arch is not None and os_ is not None:
+        platform = f"{os_}-{arch}"
+    elif arch is not None and os_ is None:
+        err("Must pass --os argument")
+    elif os_ is not None and arch is None:
+        err("Must pass --arch argument")
     else:
-        err("Must pass --product argument")
+        # if both are None we ignore the platform filter
+        platform = None
 
-# Concatentate
-if ARCH is not None and OS is not None:
-    PLATFORM = f"{OS}-{ARCH}"
-elif ARCH is not None and OS is None:
-    err("Must pass --os argument")
-elif OS is not None and ARCH is None:
-    err("Must pass --arch argument")
+    if args.cuda is not None:
+        cuda = args.cuda
+    else:
+        cuda = None
 
-#
-# Run
-#
+    if args.output is not None:
+        output_dir = args.output
+    else:
+        output_dir = "flat"
 
-# Parse JSON
-if os.path.isfile(URL):
-    with open(URL, "rb") as f:
-        MANIFEST = json.load(f)
-else:
-    try:
-        MANIFEST = requests.get(URL).json()
-    except json.decoder.JSONDecodeError:
-        err("redistrib JSON manifest file not found")
+    # Get the manifest path from either --url or --label with --product
+    if args.url is not None:
+        manifest_uri = args.url
+    elif args.label is not None:
+        if args.product is not None:
+            manifest_uri = f"{DOMAIN}/compute/{args.product}/redist/redistrib_{args.label}.json"
+        else:
+            err("Must pass --product argument")
 
-print(":: Parsing JSON: " + URL)
+    if args.retrieve is not None:
+        retrieve = args.retrieve
+    else:
+        retrieve = True
 
-# Do stuff
-fetch_action(os.path.dirname(URL) + "/")
-if UNROLLED:
-    post_action()
+    if args.integrity is not None:
+        integrity = args.integrity
+    else:
+        integrity = True
 
-### END ###
+    if args.validate is not None:
+        validate = args.validate
+    else:
+        validate = True
+
+    if args.unrolled is not None:
+        unrolled = args.unrolled
+    else:
+        unrolled = True
+
+    if args.collapse is not None:
+        collapse = args.collapse
+    else:
+        collapse = True
+
+    #
+    # Run
+    #
+
+    # Parse JSON
+    if os.path.isfile(manifest_uri):
+        with open(manifest_uri, "rb") as f:
+            manifest = json.load(f)
+    else:
+        try:
+            manifest_response = urlopen(manifest_uri)
+            manifest = json.loads(manifest_response.read())
+        except json.decoder.JSONDecodeError:
+            err("redistrib JSON manifest file not found")
+
+    print(":: Parsing JSON: " + manifest_uri)
+
+    # Do stuff
+    fetch_action(
+        os.path.dirname(manifest_uri) + "/",
+        manifest,
+        component,
+        platform,
+        cuda,
+        retrieve,
+        integrity,
+        validate,
+    )
+    if unrolled:
+        post_action(output_dir, collapse)
+
+    ### END ###
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nvidia-binarchive"
+# version is extracted from the parse_redist.py __version__ variable.
+dynamic = ["version"]
+description = "Parser for NVIDIA redistributable JSON manifests"
+requires-python = ">=3.8"
+license = "MIT"
+readme = "README.md"
+keywords = []
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.scripts]
+# This defines the function that will get called when a user runs "nvidia-binarchive"
+nvidia-binarchive = "nvidia_binarchive.parse_redist:main"
+
+[tool.hatch.version]
+path = "parse_redist.py"
+
+[tool.hatch.build.targets.wheel]
+# The only code to include is the script
+include = [
+    "parse_redist.py",
+]
+
+[tool.hatch.build.targets.wheel.sources]
+# This puts the script in a sub-directory of site-package so it doesn't pollute the top level.
+"" = "nvidia_binarchive"

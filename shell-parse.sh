@@ -415,6 +415,7 @@ echo "---"
 
 echo -e "\n:: Post Actions"
 for binarchive in ${artifacts[@]}; do
+    plat=$(basename "$binarchive" | awk -F "-" '{print $2"-"$3}')
     if [[ $extraction -eq 1 ]]; then
         echo " -> $binarchive"
         if [[ -f $binarchive ]]; then
@@ -430,7 +431,7 @@ for binarchive in ${artifacts[@]}; do
 done
 echo "---"
 
-wait_input "big tarball" "no" $makebundle && makebundle=1
+[[ $userask -eq 1 ]] && wait_input "big tarball" "no" $makebundle && makebundle=1
 
 export -f new_tarball run_cmd
 if [[ $makebundle -eq 1 ]]; then

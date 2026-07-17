@@ -10,7 +10,7 @@ Sample parser for redistrib JSON manifests
 5. Flattens into a collapsed directory structure
 """
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 minimum = "3.8"
 
 """
@@ -33,11 +33,14 @@ import re
 import shutil
 import tarfile
 import zipfile
+from urllib.parse import urljoin
 from urllib.request import urlopen
 
 
 ARCHIVES = {}
 DOMAIN = "https://developer.download.nvidia.com"
+DOMAIN_HOST_ENV = "DOMAIN_HOST"
+CHANNELS_DOMAIN = os.environ.get(DOMAIN_HOST_ENV, "https://packages.nvidia.com")
 
 
 def err(msg):
@@ -114,6 +117,95 @@ def flatten_tree(src, dest, tag=None):
     shutil.rmtree(src)
 
 
+def resolve(parent, relative_path):
+    """Join a component relative_path onto the manifest's parent location.
+
+    Manifests served from the Repo Channels CDN reference pool artifacts
+    with dot-segment relative paths (e.g. ../../../pool/...).
+    urljoin() collapses those per RFC 3986 so urlopen() requests the real
+    path; a raw string concat would send a literal ../ that the CDN 404s.
+    Local filesystem manifests keep the plain join.
+    """
+    if "://" in parent:
+        return urljoin(parent, relative_path)
+    return parent + relative_path
+
+
+def load_json_uri(uri):
+    """Read and parse a JSON document from a local path or URL"""
+    try:
+        if os.path.isfile(uri):
+            with open(uri, "rb") as file:
+                return json.load(file)
+        return json.loads(urlopen(uri).read())
+    except OSError as error:
+        message = "unable to fetch " + uri + " (" + str(error) + ")"
+        if uri.startswith(CHANNELS_DOMAIN) and DOMAIN_HOST_ENV not in os.environ:
+            message += (
+                "\n  -> the Repo Channels CDN may not be published yet; set "
+                + DOMAIN_HOST_ENV
+                + " to target another host"
+            )
+        err(message)
+    except json.decoder.JSONDecodeError:
+        err("invalid JSON at " + uri)
+
+
+def version_key(version):
+    """Sort key that orders numeric version components numerically"""
+    key = []
+    for part in str(version).split("."):
+        key.append((0, int(part)) if part.isdigit() else (1, part))
+    return key
+
+
+def release_base(domain, product):
+    """Discovery root for a product on the Repo Channels CDN"""
+    return f"{domain}/bin-archive/release/{product}/"
+
+
+def list_channels(domain, product=None):
+    """Print channels (and per-product versions) discoverable on the CDN"""
+    channels = load_json_uri(f"{domain}/bin-archive/release/channels.json")
+    print(":: Channels:")
+    for channel, products in channels.items():
+        names = ", ".join(entry.get("product", "?") for entry in products)
+        print(f"  - {channel}  [{names}]")
+
+    if product is not None:
+        releases = load_json_uri(release_base(domain, product) + "releases.json")
+        print("\n:: Releases (" + product + "):")
+        for channel, entries in releases.items():
+            versions = ", ".join(entry.get("version", "?") for entry in entries)
+            print(f"  - {channel}: {versions}")
+
+
+def discover_release(domain, product, channel, label=None):
+    """Resolve a channel + version to its content-addressed (CAS) manifest.
+
+    Reads {product}/releases.json, selects the requested version (or the
+    highest when --label is omitted), and returns the CAS manifest URL plus
+    the expected sha256/size so the caller can verify the fetched bytes.
+    """
+    releases = load_json_uri(release_base(domain, product) + "releases.json")
+    if channel not in releases:
+        err("channel '" + channel + "' not found for product '" + product + "'")
+
+    entries = releases[channel]
+    if label is not None:
+        entries = [entry for entry in entries if entry.get("version") == label]
+        if not entries:
+            err("version '" + label + "' not found in channel '" + channel + "'")
+    if not entries:
+        err("channel '" + channel + "' has no releases for product '" + product + "'")
+
+    entry = sorted(entries, key=lambda item: version_key(item.get("version", "")))[-1]
+    if "manifest" not in entry:
+        err("release entry for channel '" + channel + "' is missing a manifest path")
+    manifest_uri = urljoin(release_base(domain, product), entry["manifest"])
+    return manifest_uri, entry.get("sha256"), entry.get("size")
+
+
 def parse_artifact(
     parent,
     manifest,
@@ -125,9 +217,9 @@ def parse_artifact(
     variant=None,
 ):
     if variant:
-        full_path = parent + manifest[component][platform][variant]["relative_path"]
+        full_path = resolve(parent, manifest[component][platform][variant]["relative_path"])
     else:
-        full_path = parent + manifest[component][platform]["relative_path"]
+        full_path = resolve(parent, manifest[component][platform]["relative_path"])
 
     filename = os.path.basename(full_path)
     file_path = filename
@@ -295,11 +387,22 @@ def main():
     # Parse CLI arguments
     parser = argparse.ArgumentParser()
     # Input options
-    parser_group = parser.add_mutually_exclusive_group(required=True)
+    parser_group = parser.add_mutually_exclusive_group(required=False)
     parser_group.add_argument("-u", "--url", dest="url", help="URL to manifest")
     parser_group.add_argument("-l", "--label", dest="label", help="Release label version")
     parser.add_argument("-p", "--product", dest="product", help="Product name")
     parser.add_argument("-o", "--output", dest="output", help="Output directory")
+    parser.add_argument(
+        "--channel",
+        dest="channel",
+        help="Discover a version from a Repo Channels CDN channel and verify its CAS manifest",
+    )
+    parser.add_argument(
+        "--list",
+        dest="list",
+        action="store_true",
+        help="List channels/products/versions discoverable on the Repo Channels CDN",
+    )
     # Filter options
     parser.add_argument("--component", dest="component", help="Component name")
     parser.add_argument("--os", dest="os", help="Operating System")
@@ -414,14 +517,31 @@ def main():
     else:
         output_dir = "flat"
 
-    # Get the manifest path from either --url or --label with --product
-    if args.url is not None:
+    # Discovery listing mode (Repo Channels CDN); nothing to download
+    if args.list:
+        list_channels(CHANNELS_DOMAIN, args.product)
+        return
+
+    # Content-addressed manifest expectations, set when discovering a channel
+    manifest_sha256 = None
+    manifest_size = None
+
+    # Get the manifest from --channel discovery (CDN), --url, or --label (legacy)
+    if args.channel is not None:
+        if args.product is None:
+            err("Must pass --product argument with --channel")
+        manifest_uri, manifest_sha256, manifest_size = discover_release(
+            CHANNELS_DOMAIN, args.product, args.channel, args.label
+        )
+    elif args.url is not None:
         manifest_uri = args.url
     elif args.label is not None:
         if args.product is not None:
             manifest_uri = f"{DOMAIN}/compute/{args.product}/redist/redistrib_{args.label}.json"
         else:
             err("Must pass --product argument")
+    else:
+        err("Must set an input using --url, --label (with --product), or --channel")
 
     if args.retrieve is not None:
         retrieve = args.retrieve
@@ -452,16 +572,29 @@ def main():
     # Run
     #
 
-    # Parse JSON
+    # Read the manifest bytes (local or remote)
     if os.path.isfile(manifest_uri):
         with open(manifest_uri, "rb") as f:
-            manifest = json.load(f)
+            manifest_bytes = f.read()
     else:
         try:
-            manifest_response = urlopen(manifest_uri)
-            manifest = json.loads(manifest_response.read())
-        except json.decoder.JSONDecodeError:
+            manifest_bytes = urlopen(manifest_uri).read()
+        except OSError:
             err("redistrib JSON manifest file not found")
+
+    # Verify the content-addressed manifest against releases.json (CAS)
+    if manifest_size is not None and len(manifest_bytes) != int(manifest_size):
+        err("manifest size mismatch: " + str(len(manifest_bytes)) + " != " + str(manifest_size))
+    if manifest_sha256 is not None:
+        digest = hashlib.sha256(manifest_bytes).hexdigest()
+        if digest != manifest_sha256:
+            err("manifest sha256 mismatch:\n  -> Calculation: " + digest + "\n  -> Expectation: " + manifest_sha256)
+        print("	 Verified manifest sha256: " + digest)
+
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.decoder.JSONDecodeError:
+        err("redistrib JSON manifest file not found")
 
     print(":: Parsing JSON: " + manifest_uri)
 

@@ -38,6 +38,8 @@ from urllib.request import urlopen
 
 
 ARCHIVES = {}
+# Seconds to wait for a network connection/response before giving up
+TIMEOUT = 30
 DOMAIN = "https://developer.download.nvidia.com"
 DOMAIN_HOST_ENV = "DOMAIN_HOST"
 CHANNELS_DOMAIN = os.environ.get(DOMAIN_HOST_ENV, "https://packages.nvidia.com")
@@ -51,7 +53,7 @@ def err(msg):
 
 def fetch_file(full_path, filename):
     """Download file to disk"""
-    download = urlopen(full_path)
+    download = urlopen(full_path, timeout=TIMEOUT)
     if download.status != 200:
         print("  -> Failed: " + filename)
     else:
@@ -137,7 +139,7 @@ def load_json_uri(uri):
         if os.path.isfile(uri):
             with open(uri, "rb") as file:
                 return json.load(file)
-        return json.loads(urlopen(uri).read())
+        return json.loads(urlopen(uri, timeout=TIMEOUT).read())
     except OSError as error:
         message = "unable to fetch " + uri + " (" + str(error) + ")"
         if uri.startswith(CHANNELS_DOMAIN) and DOMAIN_HOST_ENV not in os.environ:
@@ -202,8 +204,10 @@ def discover_release(domain, product, channel, label=None):
     entry = sorted(entries, key=lambda item: version_key(item.get("version", "")))[-1]
     if "manifest" not in entry:
         err("release entry for channel '" + channel + "' is missing a manifest path")
+    if entry.get("sha256") is None or entry.get("size") is None:
+        err("release entry for channel '" + channel + "' is missing CAS metadata (sha256/size)")
     manifest_uri = urljoin(release_base(domain, product), entry["manifest"])
-    return manifest_uri, entry.get("sha256"), entry.get("size")
+    return manifest_uri, entry["sha256"], entry["size"]
 
 
 def parse_artifact(
@@ -528,6 +532,8 @@ def main():
 
     # Get the manifest from --channel discovery (CDN), --url, or --label (legacy)
     if args.channel is not None:
+        if args.url is not None:
+            err("--channel and --url are mutually exclusive")
         if args.product is None:
             err("Must pass --product argument with --channel")
         manifest_uri, manifest_sha256, manifest_size = discover_release(
@@ -578,7 +584,7 @@ def main():
             manifest_bytes = f.read()
     else:
         try:
-            manifest_bytes = urlopen(manifest_uri).read()
+            manifest_bytes = urlopen(manifest_uri, timeout=TIMEOUT).read()
         except OSError:
             err("redistrib JSON manifest file not found")
 
@@ -594,7 +600,7 @@ def main():
     try:
         manifest = json.loads(manifest_bytes)
     except json.decoder.JSONDecodeError:
-        err("redistrib JSON manifest file not found")
+        err("invalid redistrib JSON manifest at " + manifest_uri)
 
     print(":: Parsing JSON: " + manifest_uri)
 

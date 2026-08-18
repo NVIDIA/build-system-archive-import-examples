@@ -234,7 +234,7 @@ def parse_artifact(
         and not os.path.exists(filename)
         and not os.path.exists(full_path)
         and not os.path.exists(parent + filename)
-        and not os.path.exists(pwd + filename)
+        and not os.path.exists(os.path.join(pwd, filename))
     ):
         # Download archive
         fetch_file(full_path, filename)

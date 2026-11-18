@@ -342,7 +342,7 @@ def post_action(output_dir, collapse=True):
     for platform in ARCHIVES:
         for archive in ARCHIVES[platform]:
             try:
-                binTag = archive.split("-")[3].split("_")[1]
+                binTag = os.path.basename(archive).split("-")[3].split("_")[1]
                 # print(platform, binTag)
             except:
                 binTag = None
